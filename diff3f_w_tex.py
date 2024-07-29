@@ -17,7 +17,7 @@ import random
 
 
 FEATURE_DIMS = 1280+768 # diffusion unet + dino
-VERTEX_GPU_LIMIT = 10000
+VERTEX_GPU_LIMIT = 35000
 
 
 def arange_pixels(
@@ -107,6 +107,7 @@ def compute_features_from_mesh(
     tolerance = 0.004,
     random_seed = 42,
     use_normal_map = True,
+    use_tex=True,
     ):
     features = get_features_per_vertex_w_tex(
         device=device,
@@ -121,6 +122,7 @@ def compute_features_from_mesh(
         tolerance=tolerance,
         num_images_per_prompt=num_images_per_prompt,
         use_normal_map=use_normal_map,
+        use_tex=use_tex,
     )
     return features.cpu()
 
@@ -143,6 +145,7 @@ def get_features_per_vertex_w_tex(
     return_image=True,
     bq=True,
     prompts_list=None,
+    use_tex=True,
 ):
     t1 = time()
     
@@ -151,19 +154,19 @@ def get_features_per_vertex_w_tex(
     if mesh_vertices is None:
         mesh_vertices = mesh.verts_list()[0]
         print("num mesh_vertices: ",mesh_vertices.shape[0])
-        print(VERTEX_GPU_LIMIT)
+        print("VERTEX_GPU_LIMIT: ",VERTEX_GPU_LIMIT)
     if len(mesh_vertices) > VERTEX_GPU_LIMIT:
         samples = random.sample(range(len(mesh_vertices)), VERTEX_GPU_LIMIT)
         maximal_distance = torch.cdist(mesh_vertices[samples], mesh_vertices[samples]).max()
     else:
         maximal_distance = torch.cdist(mesh_vertices, mesh_vertices).max()  # .cpu()
     ball_drop_radius = maximal_distance * tolerance
-    torch.cuda.empty_cache()
     #  [100, 512 512 4] [100, 512, 512, 1, 3] ## [100, 512, 512, 1]
     # print(batched_renderings.shape, normal_batched_renderings.shape, depth.shape)
     batched_renderings, normal_batched_renderings, camera, depth = batch_render(
         device, mesh, mesh.verts_list()[0], num_views, H, W, use_normal_map
     )
+    torch.cuda.empty_cache()
     #import pdb;pdb.set_trace()
     print("Rendering complete")
     if use_normal_map:
@@ -210,8 +213,8 @@ def get_features_per_vertex_w_tex(
         #import pdb;pdb.set_trace()
         # use
         pil_b_rnd = ToPILImage()(batched_renderings[idx, :, :, :3].permute(2,0,1))
-        
-        aligned_dino_features = get_dino_features(device, dino_model, pil_b_rnd, grid)
+        in_dino = pil_b_rnd if use_tex else diffusion_output[1][0]
+        aligned_dino_features = get_dino_features(device, dino_model, in_dino, grid)
         aligned_features = None
         with torch.no_grad():
             ft = torch.nn.Upsample(size=(H,W), mode="bilinear")(diffusion_output[0].unsqueeze(0)).to(device)
