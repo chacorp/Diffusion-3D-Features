@@ -1,9 +1,18 @@
 # Diffusion 3D Features (Diff3F): Decorating Untextured Shapes with Distilled Semantic Features [CVPR 2024]
 <a href='https://diff3f.github.io/'><img src='https://img.shields.io/badge/Project-Page-green'></a>  [![ArXiv](https://img.shields.io/badge/arXiv-2311.17024-b31b1b.svg)](https://arxiv.org/abs/2311.17024)
 [![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/diffusion-3d-features-diff3f-decorating/3d-dense-shape-correspondence-on-shrec-19)](https://paperswithcode.com/sota/3d-dense-shape-correspondence-on-shrec-19?p=diffusion-3d-features-diff3f-decorating) <a href="https://pytorch.org/get-started/locally/"><img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-ee4c2c?logo=pytorch&logoColor=white"></a>
-![](assets/teaser.jpg)
+<!-- ![](assets/teaser.jpg) -->
 
 [Project Webpage](https://diff3f.github.io/) | [Paper](https://arxiv.org/abs/2311.17024)
+
+## Docker
+Use docker image to create workspace, then follow the original setup steps! \
+In some cases you might need to reinstall cuda-toolkit...
+```shell
+docker pull chacorp/diff3f
+docker run -it --rm --gpus '"device=0"' chacorp/diff3f:latest
+```
+
 
 
 ## Setup
