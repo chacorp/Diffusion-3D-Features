@@ -21,7 +21,7 @@ def run_rendering2(device, mesh, mesh_vertices, num_views, H, W, add_angle_azi=0
         rasterizer = MeshRasterizer(cameras=camera, raster_settings=rasterization_settings)
         return camera, rasterizer
 
-    def render_single_view(azimuth, elevation, is_normal=False, batch_mesh=None):
+    def render_single_view(azimuth, elevation, is_normal=False):
         camera, rasterizer = create_camera_and_rasterizer(azimuth, elevation)
         camera_centre = camera.get_camera_center()
         lights = PointLights(
@@ -31,21 +31,19 @@ def run_rendering2(device, mesh, mesh_vertices, num_views, H, W, add_angle_azi=0
             location=camera_centre,
             device=device,
         )
-        shader = HardPhongNormalShader(device=device, cameras=camera, lights=lights) if is_normal else HardPhongShader(device=device, cameras=camera, lights=lights)
-        renderer = MeshRenderer(rasterizer=rasterizer, shader=shader)
-        
-        if batch_mesh is not None:
-            rendered_image = renderer(batch_mesh)
-            fragments = rasterizer(batch_mesh)
+        if is_normal:
+            shader = HardPhongNormalShader(device=device, cameras=camera, lights=lights)
+            normal_renderer = MeshRenderer(rasterizer=rasterizer, shader=shader)
+            rendered_image = normal_renderer(mesh)
+            camera=None
+            depth_map=None
         else:
+            shader = HardPhongShader(device=device, cameras=camera, lights=lights)
+            renderer = MeshRenderer(rasterizer=rasterizer, shader=shader)
             rendered_image = renderer(mesh)
             fragments = rasterizer(mesh)
-        
-        if is_normal:
-            return rendered_image, None, None
-        else:
             depth_map = fragments.zbuf
-            return rendered_image, depth_map, camera
+        return rendered_image, depth_map, camera
 
     bbox = mesh.get_bounding_boxes()
     bbox_min = bbox.min(dim=-1).values[0]
@@ -56,20 +54,42 @@ def run_rendering2(device, mesh, mesh_vertices, num_views, H, W, add_angle_azi=0
     distance = torch.sqrt((bb_diff * bb_diff).sum())
     distance *= scaling_factor
     steps = int(math.sqrt(num_views))
-    end = 360 - 360 / steps
+    end = 360 - 360/steps
     elevation = torch.linspace(start=0, end=end, steps=steps).repeat(steps) + add_angle_ele
     azimuth = torch.linspace(start=0, end=end, steps=steps)
     azimuth = torch.repeat_interleave(azimuth, steps) + add_angle_azi
     bbox_center = bbox_center.unsqueeze(0)
 
     if use_batch:
+        rotation, translation = look_at_view_transform(
+            dist=distance, azim=azimuth, elev=elevation, device=device, at=bbox_center
+        )
+        camera = PerspectiveCameras(R=rotation, T=translation, device=device)
+        rasterization_settings = RasterizationSettings(
+            image_size=(H, W), blur_radius=0.0, faces_per_pixel=1, bin_size=0
+        )
+        rasterizer = MeshRasterizer(cameras=camera, raster_settings=rasterization_settings)
+        camera_centre = camera.get_camera_center()
+        lights = PointLights(
+            diffuse_color=((0.4, 0.4, 0.5),),
+            ambient_color=((0.6, 0.6, 0.6),),
+            specular_color=((0.01, 0.01, 0.01),),
+            location=camera_centre,
+            device=device,
+        )
+        shader = HardPhongShader(device=device, cameras=camera, lights=lights)
+        batch_renderer = MeshRenderer(rasterizer=rasterizer, shader=shader)
         batch_mesh = mesh.extend(num_views)
-        batched_renderings, depth, camera = render_single_view(azimuth, elevation, batch_mesh=batch_mesh)
+        batched_renderings = batch_renderer(batch_mesh)
 
         normal_batched_renderings = None
         if use_normal_map:
-            normal_batched_renderings, _, _ = render_single_view(azimuth, elevation, is_normal=True, batch_mesh=batch_mesh)
-        
+            normal_shader = HardPhongNormalShader(device=device, cameras=camera, lights=lights)
+            normal_batch_renderer = MeshRenderer(rasterizer=rasterizer, shader=normal_shader)
+            normal_batched_renderings = normal_batch_renderer(batch_mesh)
+        torch.cuda.empty_cache()
+        fragments = rasterizer(batch_mesh)
+        depth = fragments.zbuf
         return batched_renderings, normal_batched_renderings, camera, depth
     else:
         batched_renderings = []
@@ -81,16 +101,15 @@ def run_rendering2(device, mesh, mesh_vertices, num_views, H, W, add_angle_azi=0
         for i in range(num_views):
             rendered_image, depth_map, camera = render_single_view(azimuth[i:i+1], elevation[i:i+1])
             batched_renderings.append(rendered_image)
-            if depth_map is not None:
-                depth_maps.append(depth_map)
-            if camera is not None:
-                all_rotations.append(camera.R)
-                all_translations.append(camera.T)
+            depth_maps.append(depth_map)
+            all_rotations.append(camera.R)
+            all_translations.append(camera.T)
 
             if use_normal_map:
                 normal_rendered_image, _, _ = render_single_view(azimuth[i:i+1], elevation[i:i+1], is_normal=True)
                 normal_batched_renderings.append(normal_rendered_image)
-        
+            torch.cuda.empty_cache()
+            
         batched_renderings = torch.vstack(batched_renderings)
         normal_batched_renderings = torch.vstack(normal_batched_renderings) if use_normal_map else None
         depth = torch.vstack(depth_maps)
